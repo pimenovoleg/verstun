@@ -325,6 +325,157 @@ def test_external_image_passthrough(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_external_gif_renders_as_video_without_download(tmp_path):
+    html, failed = _convert("![animation](https://cdn.example.com/a.gif)", tmp_path)
+    assert '<video src="https://cdn.example.com/a.gif"></video>' in html
+    assert "<img" not in html
+    assert failed == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_external_video_formats_render_as_video(tmp_path):
+    for ext in ("mp4", "mov", "m4v", "webm"):
+        html, failed = _convert(f"![video](https://cdn.example.com/clip.{ext})", tmp_path)
+        assert f'<video src="https://cdn.example.com/clip.{ext}"></video>' in html
+        assert failed == []
+
+
+def test_external_media_extensions_are_case_insensitive(tmp_path):
+    html, failed = _convert("![video](https://cdn.example.com/CLIP.MP4)", tmp_path)
+    assert '<video src="https://cdn.example.com/CLIP.MP4"></video>' in html
+    assert failed == []
+
+
+def test_external_audio_formats_render_as_audio(tmp_path):
+    for ext in ("mp3", "ogg", "oga", "m4a", "aac", "wav", "flac"):
+        html, failed = _convert(f"![audio](https://cdn.example.com/track.{ext})", tmp_path)
+        assert f'<audio src="https://cdn.example.com/track.{ext}"></audio>' in html
+        assert failed == []
+
+
+def test_external_iphone_photo_formats_render_as_image(tmp_path):
+    for ext in ("heic", "heif"):
+        html, failed = _convert(f"![photo](https://cdn.example.com/photo.{ext})", tmp_path)
+        assert f'<img src="https://cdn.example.com/photo.{ext}" />' in html
+        assert failed == []
+
+
+def test_external_media_type_uses_path_extension_not_query_or_fragment(tmp_path):
+    html, failed = _convert(
+        "![bad](https://cdn.example.com/file?name=clip.mp4)\n\n"
+        "![bad](https://cdn.example.com/file.svg?name=photo.png)\n\n"
+        "![ok](https://cdn.example.com/video.mp4?token=abc#frag)",
+        tmp_path,
+    )
+    assert '<video src="https://cdn.example.com/video.mp4?token=abc#frag"></video>' in html
+    assert "file?name=clip.mp4" not in html
+    assert "file.svg?name=photo.png" not in html
+    assert failed == [0, 1]
+
+
+def test_external_dangerous_media_extensions_are_rejected(tmp_path):
+    md = "\n\n".join(
+        f"![bad](https://cdn.example.com/file.{ext})"
+        for ext in ("svg", "html", "htm", "pdf", "exe", "js", "zip", "m3u8", "mpd")
+    )
+    html, failed = _convert(md, tmp_path)
+    assert "<img" not in html
+    assert "<video" not in html
+    assert "<audio" not in html
+    assert "cdn.example.com" not in html
+    assert failed == list(range(9))
+
+
+def test_external_media_rejects_malformed_urls(tmp_path):
+    md = "\n\n".join(
+        (
+            "![bad](//cdn.example.com/video.mp4)",
+            "![bad](https://user:pass@cdn.example.com/video.mp4)",
+            "![bad](https://cdn.example.com\\evil/video.mp4)",
+            "![bad](file:///tmp/video.mp4)",
+        )
+    )
+    html, failed = _convert(md, tmp_path)
+    assert "<video" not in html
+    assert "cdn.example.com" not in html
+    assert failed == [0, 1, 2, 3]
+
+
+def test_external_media_caption_is_escaped(tmp_path):
+    html, failed = _convert(
+        '![video](https://cdn.example.com/clip.mp4 "Caption <script>alert(1)</script>")',
+        tmp_path,
+    )
+    assert failed == []
+    assert "<p><figure>" not in html
+    assert '<figure><video src="https://cdn.example.com/clip.mp4"></video>' in html
+    assert "<figcaption>Caption &lt;script&gt;alert(1)&lt;/script&gt;</figcaption></figure>" in html
+    assert "<script>" not in html
+
+
+def test_external_media_src_is_escaped(tmp_path):
+    html, failed = _convert("![video](https://cdn.example.com/clip.mp4?a=1&b=2)", tmp_path)
+    assert failed == []
+    assert '<video src="https://cdn.example.com/clip.mp4?a=1&amp;b=2"></video>' in html
+    assert 'src="https://cdn.example.com/clip.mp4?a=1&b=2"' not in html
+
+
+def test_external_media_renders_inside_nested_block_contexts(tmp_path):
+    html, failed = _convert(
+        "> ![quote video](https://cdn.example.com/quote.mp4)\n\n"
+        "- ![list audio](https://cdn.example.com/list.mp3)\n\n"
+        ":::details Media\n"
+        "![details gif](https://cdn.example.com/details.gif)\n"
+        ":::",
+        tmp_path,
+    )
+    assert failed == []
+    assert '<video src="https://cdn.example.com/quote.mp4"></video>' in html
+    assert '<li><video src="https://cdn.example.com/list.mp3"></video>' not in html
+    assert '<audio src="https://cdn.example.com/list.mp3"></audio>' in html
+    assert '<video src="https://cdn.example.com/details.gif"></video>' in html
+
+
+def test_external_media_limit_is_enforced(tmp_path):
+    md = "\n\n".join(f"![v](https://cdn.example.com/{i}.mp4)" for i in range(51))
+    html, failed = _convert(md, tmp_path)
+    assert html.count("<video") == 50
+    assert failed == [50]
+
+
+def test_external_media_limit_checked_before_saving_base64_image(tmp_path):
+    png = _png_bytes()
+    b64 = _b64(png)
+    md = "\n\n".join(f"![v](https://cdn.example.com/{i}.mp4)" for i in range(50))
+    md += f"\n\n![over](data:image/png;base64,{b64})"
+    html, failed = _convert(md, tmp_path)
+    assert html.count("<video") == 50
+    assert "<img" not in html
+    assert failed == [50]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_external_media_inside_text_degrades_to_alt_text(tmp_path):
+    html, failed = _convert(
+        "Before ![video alt](https://cdn.example.com/clip.mp4) after.", tmp_path
+    )
+    assert "<video" not in html
+    assert "https://cdn.example.com" not in html
+    assert "Before video alt after." in html
+    assert failed == []
+
+
+def test_external_media_inside_table_does_not_emit_media_tag(tmp_path):
+    html, failed = _convert(
+        "| media |\n|---|\n| ![audio alt](https://cdn.example.com/track.mp3) |",
+        tmp_path,
+    )
+    assert "<audio" not in html
+    assert "https://cdn.example.com" not in html
+    assert "audio alt" in html
+    assert failed == []
+
+
 def test_reference_base64_image_hosted(tmp_path):
     import hashlib
 
@@ -403,7 +554,7 @@ def test_data_scheme_rejected_for_href(tmp_path):
     assert "x" in html
 
 
-def test_failed_image_indices_ordered(tmp_path):
+def test_failed_media_indices_ordered(tmp_path):
     # 3 images: #1 (bad base64) fails, #2 ok, #3 (svg) fails -> [0, 2]
     good = _b64(_png_bytes(color=b"\x10\x20\x30"))
     svg = _b64(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>')
@@ -492,7 +643,7 @@ def test_hr_followed_by_heading_gets_spacer(tmp_path):
 
 
 def test_image_only_paragraph_no_spacer_before_or_after(tmp_path):
-    # An image-only paragraph is not a text paragraph: it gets no spacer before it,
+    # A media-only paragraph is not a text paragraph: it gets no spacer before it,
     # and the text paragraph after it gets none either (image-para is not a
     # "preceding text paragraph").
     html, _ = _convert(

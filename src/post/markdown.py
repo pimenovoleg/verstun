@@ -15,6 +15,8 @@ intercepted, decoded, and hosted via the media store.
 from __future__ import annotations
 
 import re
+from enum import StrEnum
+from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 from markdown_it.common.utils import escapeHtml
@@ -33,6 +35,36 @@ _ALLOWED_LINK_SCHEMES = ("https:", "http:", "mailto:", "tel:", "tg:")
 # Pulls the base64 payload out of a `data:<mime>;base64,<payload>` URI.
 _DATA_URI_RE = re.compile(r"^data:[^,]*;base64,(?P<payload>.*)$", re.IGNORECASE | re.DOTALL)
 _DETAILS_RE = re.compile(r"^(?P<kind>details|details-open)(?:\s+(?P<summary>.*))?$")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_MAX_MEDIA_ATTACHMENTS = 50
+
+
+class _MediaKind(StrEnum):
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+
+
+_MEDIA_EXTENSIONS: dict[str, _MediaKind] = {
+    ".jpg": _MediaKind.IMAGE,
+    ".jpeg": _MediaKind.IMAGE,
+    ".png": _MediaKind.IMAGE,
+    ".webp": _MediaKind.IMAGE,
+    ".heic": _MediaKind.IMAGE,
+    ".heif": _MediaKind.IMAGE,
+    ".gif": _MediaKind.VIDEO,
+    ".mp4": _MediaKind.VIDEO,
+    ".mov": _MediaKind.VIDEO,
+    ".m4v": _MediaKind.VIDEO,
+    ".webm": _MediaKind.VIDEO,
+    ".mp3": _MediaKind.AUDIO,
+    ".ogg": _MediaKind.AUDIO,
+    ".oga": _MediaKind.AUDIO,
+    ".m4a": _MediaKind.AUDIO,
+    ".aac": _MediaKind.AUDIO,
+    ".wav": _MediaKind.AUDIO,
+    ".flac": _MediaKind.AUDIO,
+}
 
 
 def _href_allowed(href: str) -> bool:
@@ -54,6 +86,30 @@ def _parse_link_allowed(href: str) -> bool:
 def _img_src_allowed(src: str) -> bool:
     lowered = src.strip().lower()
     return lowered.startswith("https:") or lowered.startswith("http:")
+
+
+def _classify_external_media(src: str) -> _MediaKind | None:
+    value = src.strip()
+    decoded_value = unquote(value)
+    if _CONTROL_CHARS_RE.search(value) or "\\" in value or "\\" in decoded_value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.netloc or parsed.username is not None or parsed.password is not None:
+        return None
+    decoded_netloc = unquote(parsed.netloc)
+    if any(char in decoded_netloc for char in ("@", "/", "\\", "?", "#")):
+        return None
+
+    path = unquote(parsed.path)
+    if _CONTROL_CHARS_RE.search(path) or "\\" in path:
+        return None
+    lowered_path = path.lower()
+    for extension, kind in _MEDIA_EXTENSIONS.items():
+        if lowered_path.endswith(extension):
+            return kind
+    return None
 
 
 def _is_escaped(src: str, pos: int) -> bool:
@@ -100,12 +156,13 @@ def _spoiler_plugin(md: MarkdownIt) -> None:
     md.inline.ruler.before("text", "spoiler", tokenize_spoiler)
 
 
-class _ImageState:
-    """Tracks 0-based image order and collects the indices that failed to host."""
+class _MediaState:
+    """Tracks 0-based media order and collects indices that failed to render."""
 
     def __init__(self) -> None:
         self.index = 0
         self.failed: list[int] = []
+        self.media_count = 0
 
 
 def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[int]]:
@@ -137,7 +194,7 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
     # only visible text.
     parser.validateLink = _parse_link_allowed
 
-    state = _ImageState()
+    state = _MediaState()
     rules = parser.renderer.rules
 
     def render_token_with_tag(tag: str):
@@ -263,14 +320,36 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
     rules["footnote_open"] = render_footnote_open
     rules["footnote_close"] = render_footnote_close
 
+    media_block_context: list[bool] = []
+    suppress_paragraph_context: list[bool] = []
+
+    def _render_media(kind: _MediaKind, src: str, caption: str) -> str:
+        if kind is _MediaKind.IMAGE:
+            media = f'<img src="{escapeHtml(src)}" />'
+        elif kind is _MediaKind.VIDEO:
+            media = f'<video src="{escapeHtml(src)}"></video>'
+        else:
+            media = f'<audio src="{escapeHtml(src)}"></audio>'
+
+        if not caption:
+            return media
+        return f"<figure>{media}<figcaption>{escapeHtml(caption)}</figcaption></figure>"
+
     def render_image(tokens, idx, options, env):
         token: Token = tokens[idx]
         current = state.index
         state.index += 1
         src = token.attrGet("src") or ""
+        caption = token.attrGet("title") or ""
 
         if footnote_paragraph_seen:
             return escapeHtml(token.content)
+        if not media_block_context or not media_block_context[-1]:
+            return escapeHtml(token.content)
+
+        if state.media_count >= _MAX_MEDIA_ATTACHMENTS:
+            state.failed.append(current)
+            return ""
 
         data_match = _DATA_URI_RE.match(src.strip())
         if data_match:
@@ -279,14 +358,20 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
                 state.failed.append(current)
                 return ""
             resolved = hosted
+            kind = _MediaKind.IMAGE
         elif _img_src_allowed(src):
+            kind = _classify_external_media(src)
+            if kind is None:
+                state.failed.append(current)
+                return ""
             resolved = src
         else:
             # Disallowed scheme (e.g. javascript:) — drop and mark failed.
             state.failed.append(current)
             return ""
 
-        return f'<img src="{escapeHtml(resolved)}" />'
+        state.media_count += 1
+        return _render_media(kind, resolved, caption)
 
     rules["image"] = render_image
 
@@ -369,9 +454,9 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
     # one visually-empty spacer `<p>&nbsp;</p>` before top-level TEXT paragraphs
     # after another text paragraph, heading, or divider; before top-level dividers
     # after text paragraphs/headings; and before top-level headings after dividers.
-    # Image-only paragraphs, tables, lists, code blocks and rich details blocks keep
+    # Media-only paragraphs, tables, lists, code blocks and rich details blocks keep
     # Telegram's native spacing so they do not gain stray blank lines.
-    def _is_image_only_paragraph(tokens, open_idx) -> bool:
+    def _is_media_only_paragraph(tokens, open_idx) -> bool:
         # A `paragraph_open` whose `inline` body is just an image (plus whitespace/
         # softbreaks) — not a real text paragraph.
         inline = tokens[open_idx + 1] if open_idx + 1 < len(tokens) else None
@@ -389,6 +474,15 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
                 return False
         return has_image
 
+    def _media_only_paragraph_has_caption(tokens, open_idx) -> bool:
+        inline = tokens[open_idx + 1] if open_idx + 1 < len(tokens) else None
+        if inline is None or inline.type != "inline" or not inline.children:
+            return False
+        for child in inline.children:
+            if child.type == "image" and child.attrGet("title"):
+                return True
+        return False
+
     def _previous_top_level(tokens, idx) -> tuple[Token | None, int | None]:
         for j in range(idx - 1, -1, -1):
             if tokens[j].hidden or tokens[j].level != 0:
@@ -401,7 +495,7 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
             idx is not None
             and idx >= 2
             and tokens[idx].type == "paragraph_close"
-            and not _is_image_only_paragraph(tokens, idx - 2)
+            and not _is_media_only_paragraph(tokens, idx - 2)
         )
 
     base_paragraph_open = parser.renderer.rules.get("paragraph_open")
@@ -415,7 +509,11 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
 
         out = ""
         token = tokens[idx]
-        if token.level == 0 and not _is_image_only_paragraph(tokens, idx):
+        is_media_paragraph = _is_media_only_paragraph(tokens, idx)
+        suppress_paragraph = is_media_paragraph and _media_only_paragraph_has_caption(tokens, idx)
+        media_block_context.append(is_media_paragraph)
+        suppress_paragraph_context.append(suppress_paragraph)
+        if token.level == 0 and not is_media_paragraph:
             # Find the nearest preceding top-level block boundary.
             prev, prev_idx = _previous_top_level(tokens, idx)
             preceded_by_heading = prev is not None and prev.type == "heading_close"
@@ -425,6 +523,8 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
                 # `&nbsp;` is an allowed Rich Message entity; emit it literally so
                 # escapeHtml never turns `&` into `&amp;`.
                 out += "<p>&nbsp;</p>"
+        if suppress_paragraph:
+            return out
         if base_paragraph_open is not None:
             return out + base_paragraph_open(tokens, idx, options, env)
         return out + parser.renderer.renderToken(tokens, idx, options, env)
@@ -433,6 +533,13 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
 
     def render_paragraph_close(tokens, idx, options, env):
         if footnote_paragraph_seen:
+            return ""
+        suppress_paragraph = (
+            suppress_paragraph_context.pop() if suppress_paragraph_context else False
+        )
+        if media_block_context:
+            media_block_context.pop()
+        if suppress_paragraph:
             return ""
         if base_paragraph_close is not None:
             return base_paragraph_close(tokens, idx, options, env)

@@ -35,7 +35,7 @@ DEMO_HTML = r"""
 <blockquote>Цитата сохраняется отдельным блоком.</blockquote>
 <details><summary>Раскрывающийся блок</summary><p>Внутри можно прятать дополнительный текст, ссылки и списки.</p></details>
 <h2>Таблица</h2>
-<table><thead><tr><th>Элемент</th><th>Статус</th></tr></thead><tbody><tr><td>Заголовки</td><td>работают</td></tr><tr><td>Таблицы</td><td>работают</td></tr><tr><td>Картинки</td><td>работают</td></tr><tr><td>Сноски</td><td>работают</td></tr><tr><td>Формулы</td><td>работают</td></tr></tbody></table>
+<table><thead><tr><th>Элемент</th><th>Статус</th></tr></thead><tbody><tr><td>Заголовки</td><td>работают</td></tr><tr><td>Таблицы</td><td>работают</td></tr><tr><td>Картинки</td><td>работают</td></tr><tr><td>Видео, GIF и аудио</td><td>работают по внешним HTTPS-ссылкам</td></tr><tr><td>Сноски</td><td>работают</td></tr><tr><td>Формулы</td><td>работают</td></tr></tbody></table>
 <h2>Код</h2>
 <pre><code>print("Markdown → Rich Message")</code></pre>
 <h2>Формулы</h2>
@@ -45,6 +45,10 @@ DEMO_HTML = r"""
 <h2>Картинка</h2>
 <p>Картинки из Markdown хостятся по HTTPS и встраиваются прямо в Rich Message.</p>
 {demo_image}
+<h2>Внешние медиа</h2>
+<p>GIF, видео и аудио можно вставлять в Markdown как обычные media-ссылки. Бот не скачивает внешние файлы, а передает Telegram только публичный URL.</p>
+<video src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"></video>
+<audio src="https://www.w3schools.com/html/horse.mp3"></audio>
 <h2>Сноски</h2>
 <p>В тексте можно поставить ссылку на примечание<a name="footnote-ref-1"></a><sup><a href="#footnote-1">1</a></sup>, а само примечание будет видно внизу поста.</p>
 <a name="footnote-1"></a><footer>1. Так выглядят сноски после конвертации из Google Docs Markdown. <a href="#footnote-ref-1">↩</a></footer>
@@ -146,9 +150,9 @@ def publish_success(title: str) -> str:
     return f"Пост отправлен в канал: {title}"
 
 
-def failed_images_notice(indices: list[int]) -> str:
+def failed_media_notice(indices: list[int]) -> str:
     numbers = ", ".join(f"№{index + 1}" for index in indices)
-    return f"Пост готов, но не удалось загрузить картинки: {numbers}."
+    return f"Пост готов, но не удалось добавить медиафайлы: {numbers}."
 
 
 def users_list_text(has_users: bool) -> str:

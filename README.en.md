@@ -20,7 +20,7 @@ generated post cache data.
 - Converts Markdown to Telegram Rich Message HTML.
 - Hosts embedded PNG/JPEG/GIF/WebP images at `/media/<hash>.<ext>`.
 - Supports headings, tables, lists, quotes, code, spoilers, details blocks,
-  footnotes, and LaTeX formulas.
+  footnotes, LaTeX formulas, embedded images, and external video/GIF/audio URLs.
 - Replies with the generated Rich Message for review.
 - Optionally publishes the generated post into a connected Telegram channel.
 
@@ -33,6 +33,117 @@ $$
 x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
 $$
 ```
+
+External media uses the same Markdown syntax as images:
+
+```md
+![](https://example.com/photo.jpg)
+![](https://example.com/animation.gif)
+![](https://example.com/video.mp4)
+![](https://example.com/iphone-video.mov)
+![](https://example.com/audio.mp3)
+![](https://example.com/iphone-audio.m4a)
+```
+
+External media types are detected only from the URL path extension. Supported
+extensions: `jpg`, `jpeg`, `png`, `webp`, `heic`, `heif`, `gif`, `mp4`, `mov`,
+`m4v`, `webm`, `mp3`, `ogg`, `oga`, `m4a`, `aac`, `wav`, `flac`. Extensionless
+URLs and risky formats such as `svg`, `html`, `pdf`, `exe`, `js`, archives, or
+playlists are not emitted into the Rich Message.
+
+## Markdown Syntax
+
+### Headings
+
+```md
+# Heading H1
+## Heading H2
+### Heading H3
+#### Heading H4
+##### Heading H5
+###### Heading H6
+```
+
+### Text
+
+```md
+**bold**
+*italic*
+~~strikethrough~~
+`inline code`
+[link](https://example.com)
+||spoiler||
+```
+
+### Lists, Quotes, Code, Tables
+
+````md
+- item
+- another item
+
+1. first
+2. second
+
+> Quote
+
+```python
+print("hello")
+```
+
+| Element | Status |
+|---|---|
+| Tables | work |
+| Media | works |
+````
+
+### Details Blocks
+
+```md
+:::details Block title
+Hidden content.
+:::
+
+:::details-open Open by default
+Content.
+:::
+```
+
+### Footnotes And LaTeX
+
+```md
+Text with a footnote[^note].
+
+[^note]: Footnote text.
+
+Inline: $E = mc^2$
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+```
+
+### Images, Video, GIF, And Audio
+
+Media links must be standalone blocks with blank lines around them:
+
+```md
+![](https://example.com/photo.jpg)
+![](https://example.com/animation.gif)
+![](https://example.com/video.mp4)
+![](https://example.com/iphone-video.mov)
+![](https://example.com/audio.mp3)
+![](https://example.com/iphone-audio.m4a)
+```
+
+Captions use the Markdown title:
+
+```md
+![](https://example.com/video.mp4 "Video caption")
+```
+
+If a media link is placed inside text, a table, or a footnote, it is rendered as
+plain alt text instead of `<img>`, `<video>`, or `<audio>`. Telegram expects Rich
+Message media as separate blocks.
 
 ## Requirements
 
@@ -50,6 +161,12 @@ If your Markdown already uses normal public image URLs such as
 `https://example.com/image.png`, Verstun passes those URLs through. In that
 case, local `/media/*` hosting is not required for those images; Telegram
 fetches them from their existing public URLs.
+
+The same rule applies to external GIF, video, and audio links: the bot does not
+run `GET` or `HEAD`, does not download files, does not sniff MIME types, and does
+not become a CDN. It only validates the `http/https` scheme and URL path
+extension, then emits a safe media tag into the Rich Message. If the URL points
+to different content, Telegram may refuse or fail to render it.
 
 The standard Docker setup in this repository is a production setup and still
 requires `MEDIA_BASE_URL=https://...`, because it is meant to safely support

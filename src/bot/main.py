@@ -418,16 +418,16 @@ async def handle_document(message: Message, bot: Bot, settings: Settings) -> Non
         max_image_bytes=_MAX_IMAGE_B64_BYTES,
         max_images_per_message=_MAX_IMAGES_PER_MESSAGE,
     )
-    html, failed_image_indices = markdown_to_rich_html(text, media_store)
+    html, failed_media_indices = markdown_to_rich_html(text, media_store)
 
-    # Cap the post body itself, before appending the failed-images notice — the
+    # Cap the post body itself, before appending the failed-media notice — the
     # notice must never push a borderline post over the limit and silence it.
     if len(html) > _MAX_HTML_CHARS:
         await message.answer(texts.POST_TOO_LONG)
         return
 
-    failed_images_text = (
-        texts.failed_images_notice(failed_image_indices) if failed_image_indices else None
+    failed_media_text = (
+        texts.failed_media_notice(failed_media_indices) if failed_media_indices else None
     )
 
     private_chat_id = getattr(getattr(message, "chat", None), "id", None)
@@ -441,8 +441,8 @@ async def handle_document(message: Message, bot: Bot, settings: Settings) -> Non
         await message.answer(texts.POST_SEND_ERROR)
         return
     sent_message_id = getattr(sent, "message_id", None)
-    if failed_images_text and isinstance(sent_message_id, int):
-        await _send_reply_message(message, failed_images_text, reply_to_message_id=sent_message_id)
+    if failed_media_text and isinstance(sent_message_id, int):
+        await _send_reply_message(message, failed_media_text, reply_to_message_id=sent_message_id)
     saved = False
     if isinstance(sent_message_id, int) and isinstance(private_chat_id, int):
         try:

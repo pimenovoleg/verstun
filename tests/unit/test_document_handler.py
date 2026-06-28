@@ -182,8 +182,8 @@ async def test_length_boundary_32769_rejected(tmp_path):
     message.answer_rich.assert_not_awaited()
 
 
-async def test_broken_images_notice_not_blocked_by_length_cap(tmp_path):
-    # Body at the cap plus a failed-images notice exceeds 32768 if combined.
+async def test_broken_media_notice_not_blocked_by_length_cap(tmp_path):
+    # Body at the cap plus a failed-media notice exceeds 32768 if combined.
     # The notice must stay outside the rich payload so a fitting post still sends.
     message = _message()
     sent = MagicMock()
@@ -199,12 +199,12 @@ async def test_broken_images_notice_not_blocked_by_length_cap(tmp_path):
     sent = _rich_arg(message).html
     assert sent == html
     message.answer.assert_any_await(
-        texts.failed_images_notice([0]),
+        texts.failed_media_notice([0]),
         reply_to_message_id=777,
     )
 
 
-async def test_broken_images_listed(tmp_path):
+async def test_broken_media_listed(tmp_path):
     message = _message()
     sent = MagicMock()
     sent.message_id = 777
@@ -218,6 +218,6 @@ async def test_broken_images_listed(tmp_path):
     html = _rich_arg(message).html
     assert html == "<b>body</b>"
     message.answer.assert_any_await(
-        texts.failed_images_notice([0, 2]),
+        texts.failed_media_notice([0, 2]),
         reply_to_message_id=777,
     )

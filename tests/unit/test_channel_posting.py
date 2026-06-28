@@ -164,6 +164,11 @@ async def test_demo_sends_rich_message_with_demo_image(tmp_path):
     assert r"<tg-math-block>x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}</tg-math-block>" in rich.html
     assert '<a href="https://telegram.org/blog/watch-apps-and-more">' in rich.html
     assert '<img src="https://example.test/media/' in rich.html
+    assert (
+        '<video src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4">'
+        in rich.html
+    )
+    assert '<audio src="https://www.w3schools.com/html/horse.mp3">' in rich.html
 
 
 async def test_users_command_lists_users_with_add_button(tmp_path):
