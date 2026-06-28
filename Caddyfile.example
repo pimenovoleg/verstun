@@ -1,0 +1,20 @@
+# Replace your-domain.com with the domain or subdomain pointing to this server.
+your-domain.com {
+	encode zstd gzip
+
+	handle /health {
+		reverse_proxy backend:8000
+	}
+
+	# Telegram fetches inline Rich Message images from this public HTTPS route.
+	handle_path /media/* {
+		root * /srv/media
+		file_server
+		header X-Content-Type-Options nosniff
+		header Content-Security-Policy "default-src 'none'; img-src 'self'; sandbox"
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

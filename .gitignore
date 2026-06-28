@@ -1,0 +1,40 @@
+# Secrets - never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime state
+.data/
+.media/
+data/
+media/
+logs/
+
+# Local tooling
+.mcp.json
+.mcp.bot.json
+.codex/.sync/
+
+# Temporary files
+tmp/
+*.tmp
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

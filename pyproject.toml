@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verstun-bot"
+version = "0.1.0"
+description = "Telegram bot for converting Google Docs Markdown exports into Rich Messages"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram==3.29.0",
+    "fastapi==0.138.0",
+    "uvicorn[standard]==0.34.2",
+    "pydantic-settings==2.9.1",
+    "structlog==25.3.0",
+    "markdown-it-py==4.2.0",
+    # tech-spec Decision 2 mandates this; reserved for extra GFM rules Task 3 may
+    # enable. table/strikethrough ship in markdown-it-py 4.x and need it at runtime.
+    "mdit-py-plugins==0.6.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.0.3",
+    # pytest-asyncio <1.4 caps pytest<9; 1.4.0 first to allow pytest 9 (CVE-2025-71176).
+    "pytest-asyncio==1.4.0",
+    "httpx==0.28.1",
+    "ruff==0.11.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+"src.bot" = ["assets/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
