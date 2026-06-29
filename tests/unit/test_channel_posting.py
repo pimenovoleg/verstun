@@ -31,6 +31,8 @@ from src.bot.main import (
     handle_document,
     handle_forwarded_channel,
     handle_publish_callback,
+    handle_settings_callback,
+    handle_settings_command,
     handle_user_picker_shared,
     handle_users_callback,
     handle_users_command,
@@ -129,7 +131,78 @@ async def test_register_bot_commands_sets_command_menu():
 
     bot.set_my_commands.assert_awaited_once_with(texts.BOT_COMMANDS)
     commands = [command.command for command in texts.BOT_COMMANDS]
-    assert commands == ["start", "demo", "channels", "users"]
+    assert commands == ["start", "demo", "channels", "users", "settings"]
+
+
+async def test_settings_command_owner_only_shows_blank_spacing_status(tmp_path):
+    settings = _settings(tmp_path)
+    message = _message()
+
+    await handle_settings_command(message, settings)
+
+    message.answer.assert_awaited_once()
+    text = message.answer.await_args.args[0]
+    assert "Пустые строки между блоками включены." in text
+    assert "абзацами, заголовками и горизонтальными линиями" in text
+    markup = message.answer.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].text == texts.BUTTON_DISABLE_BLANK_SPACERS
+    assert markup.inline_keyboard[0][0].callback_data == "set:blank_spacers:toggle"
+
+
+async def test_settings_command_ignored_for_non_owner(tmp_path):
+    settings = _settings(tmp_path)
+    message = _message(chat_id=7)
+    message.from_user.id = 7
+
+    await handle_settings_command(message, settings)
+
+    message.answer.assert_not_awaited()
+
+
+async def test_settings_command_rejects_group_chat(tmp_path):
+    settings = _settings(tmp_path)
+    message = _message(chat_id=-2001)
+    message.chat.type = "group"
+
+    await handle_settings_command(message, settings)
+
+    message.answer.assert_awaited_once_with(texts.PRIVATE_CHAT_REQUIRED)
+
+
+async def test_settings_callback_toggles_blank_spacing(tmp_path):
+    settings = _settings(tmp_path)
+    callback = _callback("set:blank_spacers:toggle")
+
+    await handle_settings_callback(callback, settings)
+
+    assert BotStateStore(settings.data_dir).get_add_blank_spacers() is False
+    callback.message.edit_text.assert_awaited_once()
+    text = callback.message.edit_text.await_args.args[0]
+    assert "Пустые строки между блоками выключены." in text
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].text == texts.BUTTON_ENABLE_BLANK_SPACERS
+    callback.answer.assert_awaited_once()
+
+
+async def test_settings_callback_ignored_for_non_owner(tmp_path):
+    settings = _settings(tmp_path)
+    callback = _callback("set:blank_spacers:toggle", user_id=7)
+
+    await handle_settings_callback(callback, settings)
+
+    callback.answer.assert_not_awaited()
+    callback.message.edit_text.assert_not_awaited()
+
+
+async def test_settings_callback_rejects_group_chat(tmp_path):
+    settings = _settings(tmp_path)
+    callback = _callback("set:blank_spacers:toggle", chat_id=-2001)
+    callback.message.chat.type = "group"
+
+    await handle_settings_callback(callback, settings)
+
+    callback.answer.assert_awaited_once_with(texts.SETTINGS_PRIVATE_REQUIRED, show_alert=True)
+    callback.message.edit_text.assert_not_awaited()
 
 
 async def test_demo_sends_rich_message_with_demo_image(tmp_path):
@@ -1036,3 +1109,26 @@ async def test_document_handler_saves_sent_rich_html(tmp_path):
     assert BotStateStore(settings.data_dir).get_post(private_chat_id=42, message_id=777) == (
         "<h1>Hello</h1>"
     )
+
+
+async def test_document_handler_passes_blank_spacing_setting_to_converter(tmp_path):
+    settings = _settings(tmp_path)
+    BotStateStore(settings.data_dir).set_add_blank_spacers(False)
+    message = _message()
+    message.document = MagicMock()
+    message.document.file_name = "post.md"
+    message.document.mime_type = "text/markdown"
+    message.document.file_size = 100
+    sent = MagicMock()
+    sent.message_id = 777
+    message.answer_rich = AsyncMock(return_value=sent)
+    bot = AsyncMock()
+    bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
+
+    with patch(
+        "src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])
+    ) as convert:
+        await handle_document(message, bot, settings)
+
+    assert convert.call_count == 1
+    assert convert.call_args.kwargs["add_blank_spacers"] is False

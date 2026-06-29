@@ -222,6 +222,23 @@ def test_save_post_can_be_loaded_by_private_chat_and_message_id(tmp_path):
     assert store.get_post(private_chat_id=42, message_id=778) is None
 
 
+def test_blank_spacer_setting_defaults_enabled_and_persists(tmp_path):
+    store = BotStateStore(str(tmp_path))
+
+    assert store.get_add_blank_spacers() is True
+
+    store.set_add_blank_spacers(False)
+
+    reloaded = BotStateStore(str(tmp_path))
+    assert reloaded.get_add_blank_spacers() is False
+    raw = json.loads((tmp_path / "bot-state.json").read_text(encoding="utf-8"))
+    assert raw["render_settings"]["add_blank_spacers"] is False
+
+    reloaded.set_add_blank_spacers(True)
+
+    assert BotStateStore(str(tmp_path)).get_add_blank_spacers() is True
+
+
 def test_save_post_replaces_previous_post_for_same_private_chat(tmp_path):
     store = BotStateStore(str(tmp_path))
 

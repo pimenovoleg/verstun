@@ -165,7 +165,12 @@ class _MediaState:
         self.media_count = 0
 
 
-def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[int]]:
+def markdown_to_rich_html(
+    md: str,
+    media_store: MediaStore,
+    *,
+    add_blank_spacers: bool = True,
+) -> tuple[str, list[int]]:
     """Convert Markdown to the rich-message HTML string Telegram accepts.
 
     Returns the HTML plus the **0-based** indices of images that could not be
@@ -513,7 +518,7 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
         suppress_paragraph = is_media_paragraph and _media_only_paragraph_has_caption(tokens, idx)
         media_block_context.append(is_media_paragraph)
         suppress_paragraph_context.append(suppress_paragraph)
-        if token.level == 0 and not is_media_paragraph:
+        if add_blank_spacers and token.level == 0 and not is_media_paragraph:
             # Find the nearest preceding top-level block boundary.
             prev, prev_idx = _previous_top_level(tokens, idx)
             preceded_by_heading = prev is not None and prev.type == "heading_close"
@@ -554,7 +559,7 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
             return parser.renderer.renderToken(tokens, idx, options, env)
 
         out = ""
-        if tokens[idx].level == 0:
+        if add_blank_spacers and tokens[idx].level == 0:
             prev, _prev_idx = _previous_top_level(tokens, idx)
             if prev is not None and prev.type == "hr":
                 out += "<p>&nbsp;</p>"
@@ -569,7 +574,7 @@ def markdown_to_rich_html(md: str, media_store: MediaStore) -> tuple[str, list[i
             return ""
 
         out = ""
-        if tokens[idx].level == 0:
+        if add_blank_spacers and tokens[idx].level == 0:
             prev, prev_idx = _previous_top_level(tokens, idx)
             preceded_by_heading = prev is not None and prev.type == "heading_close"
             preceded_by_text_paragraph = _is_text_paragraph_close(tokens, prev_idx)

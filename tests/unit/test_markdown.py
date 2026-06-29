@@ -584,6 +584,20 @@ def test_paragraphs_separated_by_spacer_block(tmp_path):
     assert "&amp;nbsp;" not in html
 
 
+def test_blank_spacer_blocks_can_be_disabled(tmp_path):
+    html, failed = markdown_to_rich_html(
+        "Параграф один.\n\nПараграф два.\n\n## Title\n\n---\n\nПосле линии.",
+        _store(tmp_path),
+        add_blank_spacers=False,
+    )
+
+    assert html == (
+        "<p>Параграф один.</p>\n<p>Параграф два.</p>\n<h2>Title</h2>\n<hr />\n<p>После линии.</p>\n"
+    )
+    assert failed == []
+    assert "&nbsp;" not in html
+
+
 def test_list_items_get_no_spacer(tmp_path):
     # The spacer rule fires only for top-level paragraphs, never inside a list.
     html, _ = _convert("- a\n- b", tmp_path)

@@ -236,6 +236,24 @@ class BotStateStore:
             html = raw.get("html")
             return html if isinstance(html, str) else None
 
+    def get_add_blank_spacers(self) -> bool:
+        with _LOCK:
+            settings = self._read().get("render_settings", {})
+            if not isinstance(settings, dict):
+                return True
+            return settings.get("add_blank_spacers") is not False
+
+    def set_add_blank_spacers(self, enabled: bool) -> None:
+        with _LOCK:
+            state = self._read()
+            render_settings = state.setdefault("render_settings", {})
+            if not isinstance(render_settings, dict):
+                render_settings = {}
+                state["render_settings"] = render_settings
+            render_settings["add_blank_spacers"] = bool(enabled)
+            render_settings["updated_at"] = _now_iso()
+            self._write(state)
+
     def save_active_controls(
         self,
         private_chat_id: int,
@@ -317,6 +335,7 @@ class BotStateStore:
         raw.setdefault("users", {})
         raw.setdefault("active_controls", {})
         raw.setdefault("published_posts", {})
+        raw.setdefault("render_settings", {"add_blank_spacers": True})
         return raw
 
     def _write(self, state: dict[str, Any]) -> None:
@@ -347,6 +366,7 @@ def _empty_state() -> dict[str, Any]:
         "users": {},
         "active_controls": {},
         "published_posts": {},
+        "render_settings": {"add_blank_spacers": True},
     }
 
 

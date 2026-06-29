@@ -12,7 +12,7 @@ own domain.
 
 Runtime state is stored in a JSON file under `DATA_DIR`: connected channels,
 managed users, per-channel access grants, the short-lived channel connect flag, and
-generated post cache data.
+generated post cache data, and rendering settings.
 
 ## What It Does
 
@@ -236,9 +236,21 @@ Docs.
   LaTeX.
 - `/channels` - connect and disconnect Telegram channels.
 - `/users` - manage users and their channel access grants.
+- `/settings` - owner-only rendering settings.
 
 Management commands are intended for a private chat with the bot. Do not use the
 bot as a group participant for preparing posts.
+
+## Rendering Settings
+
+`/settings` is available only to the instance owner. It currently contains a
+toggle for blank lines between blocks.
+
+By default, the bot inserts blank lines between adjacent paragraphs, and between
+paragraphs, headings, and horizontal rules. Telegram Rich Messages collapse
+ordinary whitespace between blocks, so without these spacer blocks the rendered
+post can visually glue text to headings and dividers. If you want a denser post,
+the owner can disable these blank lines in `/settings`.
 
 ## Users and Access
 

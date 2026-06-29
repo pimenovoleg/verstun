@@ -42,6 +42,7 @@ _MAX_IMAGES_PER_MESSAGE = 50
 USER_PICKER_REQUEST_ID = 26062801
 _USERS_PAGE_SIZE = 6
 _CHANNELS_PAGE_SIZE = 6
+_BLANK_SPACERS_CALLBACK = "set:blank_spacers:toggle"
 
 log = structlog.get_logger()
 
@@ -189,6 +190,24 @@ async def handle_channels(message: Message, settings: Settings) -> None:
         await message.answer(_channels_overview_text(channels))
     else:
         await message.answer(_channels_overview_text(channels), reply_markup=reply_markup)
+
+
+@dp.message(Command("settings"))
+async def handle_settings_command(message: Message, settings: Settings) -> None:
+    if not _is_owner(settings, _actor_id(message)):
+        return
+    if not _is_private_chat(message):
+        await _answer_private_chat_required(message)
+        return
+    try:
+        add_blank_spacers = _store(settings).get_add_blank_spacers()
+    except BotStateError:
+        await _answer_state_error(message)
+        return
+    await message.answer(
+        texts.settings_text(add_blank_spacers),
+        reply_markup=_settings_markup(add_blank_spacers),
+    )
 
 
 @dp.message(F.forward_origin)
@@ -367,6 +386,35 @@ async def handle_channel_callback(callback: CallbackQuery, settings: Settings) -
     await callback.answer()
 
 
+@dp.callback_query(F.data.startswith("set:"))
+async def handle_settings_callback(callback: CallbackQuery, settings: Settings) -> None:
+    if not _is_owner(settings, _actor_id(callback)):
+        return
+    if callback.message is None or isinstance(callback.message, InaccessibleMessage):
+        await callback.answer(texts.SETTINGS_MENU_STALE, show_alert=True)
+        return
+    if not _is_private_chat(callback.message):
+        await callback.answer(texts.SETTINGS_PRIVATE_REQUIRED, show_alert=True)
+        return
+    if (callback.data or "") != _BLANK_SPACERS_CALLBACK:
+        await callback.answer(texts.SETTINGS_MENU_STALE, show_alert=True)
+        return
+
+    try:
+        store = _store(settings)
+        add_blank_spacers = not store.get_add_blank_spacers()
+        store.set_add_blank_spacers(add_blank_spacers)
+    except BotStateError:
+        await callback.message.edit_text(texts.STATE_READ_ERROR)
+        return
+
+    await callback.message.edit_text(
+        texts.settings_text(add_blank_spacers),
+        reply_markup=_settings_markup(add_blank_spacers),
+    )
+    await callback.answer()
+
+
 @dp.message(F.document)
 async def handle_document(message: Message, bot: Bot, settings: Settings) -> None:
     if not _is_private_chat(message):
@@ -418,7 +466,16 @@ async def handle_document(message: Message, bot: Bot, settings: Settings) -> Non
         max_image_bytes=_MAX_IMAGE_B64_BYTES,
         max_images_per_message=_MAX_IMAGES_PER_MESSAGE,
     )
-    html, failed_media_indices = markdown_to_rich_html(text, media_store)
+    try:
+        add_blank_spacers = _store(settings).get_add_blank_spacers()
+    except BotStateError:
+        await _answer_state_error(message)
+        return
+    html, failed_media_indices = markdown_to_rich_html(
+        text,
+        media_store,
+        add_blank_spacers=add_blank_spacers,
+    )
 
     # Cap the post body itself, before appending the failed-media notice — the
     # notice must never push a borderline post over the limit and silence it.
@@ -591,6 +648,19 @@ def _channels_owner_markup(has_channels: bool) -> InlineKeyboardMarkup:
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _settings_markup(add_blank_spacers: bool) -> InlineKeyboardMarkup:
+    button_text = (
+        texts.BUTTON_DISABLE_BLANK_SPACERS
+        if add_blank_spacers
+        else texts.BUTTON_ENABLE_BLANK_SPACERS
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=button_text, callback_data=_BLANK_SPACERS_CALLBACK)]
+        ]
+    )
 
 
 def _handle_channel_action(
