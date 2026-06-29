@@ -1,3 +1,5 @@
+Caddyfile
+
 # Secrets - never commit
 .env
 .env.*
