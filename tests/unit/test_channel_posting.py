@@ -929,6 +929,8 @@ async def test_publish_callback_sends_saved_html_to_selected_channel(tmp_path):
     )
     bot.edit_message_reply_markup.assert_not_awaited()
     assert store.pop_active_controls(private_chat_id=42) == (777, 778)
+    raw = json.loads((tmp_path / "data" / "bot-state.json").read_text(encoding="utf-8"))
+    assert raw["published_posts"]["42:777:-100123"]["status"] == "sent"
 
 
 async def test_publish_callback_rejects_missing_cached_post(tmp_path):
@@ -1068,6 +1070,7 @@ async def test_publish_callback_reports_missing_current_rights(tmp_path):
     )
     bot.edit_message_reply_markup.assert_not_awaited()
     assert store.pop_active_controls(private_chat_id=42) == (777, 778)
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-100123) is True
 
 
 async def test_publish_callback_reports_telegram_send_error(tmp_path):
@@ -1081,15 +1084,20 @@ async def test_publish_callback_reports_telegram_send_error(tmp_path):
     bot.send_rich_message.side_effect = _telegram_error()
 
     await handle_publish_callback(callback, bot, settings)
+    await handle_publish_callback(callback, bot, settings)
 
-    callback.answer.assert_awaited_once_with(texts.PUBLISHING, show_alert=False)
+    callback.answer.assert_any_await(texts.PUBLISHING, show_alert=False)
+    callback.answer.assert_any_await(texts.PUBLISH_ALREADY_SENT, show_alert=True)
+    assert bot.send_rich_message.await_count == 1
     callback.message.edit_text.assert_not_awaited()
     callback.message.answer.assert_awaited_once_with(
-        texts.PUBLISH_SEND_ERROR,
+        texts.PUBLISH_STATUS_UNKNOWN,
         reply_to_message_id=777,
     )
     bot.edit_message_reply_markup.assert_not_awaited()
     assert store.pop_active_controls(private_chat_id=42) == (777, 778)
+    raw = json.loads((tmp_path / "data" / "bot-state.json").read_text(encoding="utf-8"))
+    assert raw["published_posts"]["42:777:-100123"]["status"] == "unknown"
 
 
 async def test_publish_callback_rejects_inaccessible_message(tmp_path):

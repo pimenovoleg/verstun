@@ -1,3 +1,5 @@
+from enum import Enum
+
 import structlog
 from aiogram import Bot
 from aiogram.enums import ChatMemberStatus
@@ -16,6 +18,12 @@ from src.bot.storage import BotStateError, ConnectedChannel
 from src.config import Settings
 
 log = structlog.get_logger()
+
+
+class _PublishStatus(Enum):
+    SENT = "sent"
+    RETRYABLE_FAILURE = "retryable_failure"
+    UNKNOWN_AFTER_SEND = "unknown_after_send"
 
 
 async def handle_publish_callback(callback: CallbackQuery, bot: Bot, settings: Settings) -> None:
@@ -65,8 +73,26 @@ async def handle_publish_callback(callback: CallbackQuery, bot: Bot, settings: S
         return
 
     await callback.answer(texts.PUBLISHING, show_alert=False)
-    published, result = await _publish_html(bot, channel, html)
-    if not published:
+    publish_status, result = await _publish_html(bot, channel, html)
+    if publish_status is _PublishStatus.SENT:
+        try:
+            store.mark_publish_sent(
+                private_chat_id=callback.message.chat.id,
+                post_message_id=post_message_id,
+                channel_id=channel_id,
+            )
+        except BotStateError:
+            log.warning("publish_marker_sent_status_failed", channel_id=channel_id)
+    elif publish_status is _PublishStatus.UNKNOWN_AFTER_SEND:
+        try:
+            store.mark_publish_unknown(
+                private_chat_id=callback.message.chat.id,
+                post_message_id=post_message_id,
+                channel_id=channel_id,
+            )
+        except BotStateError:
+            log.warning("publish_marker_unknown_status_failed", channel_id=channel_id)
+    else:
         try:
             store.clear_publish(
                 private_chat_id=callback.message.chat.id,
@@ -99,10 +125,10 @@ async def _publish_html(
     bot: Bot,
     channel: ConnectedChannel,
     html: str,
-) -> tuple[bool, str]:
+) -> tuple[_PublishStatus, str]:
     try:
         if not await _bot_can_post_to_channel(bot, channel.chat_id):
-            return False, texts.PUBLISH_RIGHTS_MISSING
+            return _PublishStatus.RETRYABLE_FAILURE, texts.PUBLISH_RIGHTS_MISSING
 
         await bot.send_rich_message(
             chat_id=channel.chat_id,
@@ -110,8 +136,8 @@ async def _publish_html(
         )
     except TelegramAPIError as exc:
         log.warning("channel_publish_failed", channel_id=channel.chat_id, exc_info=exc)
-        return False, texts.PUBLISH_SEND_ERROR
-    return True, texts.publish_success(channel.title)
+        return _PublishStatus.UNKNOWN_AFTER_SEND, texts.PUBLISH_STATUS_UNKNOWN
+    return _PublishStatus.SENT, texts.publish_success(channel.title)
 
 
 def _parse_publish_callback(data: str) -> tuple[int | None, int | None]:

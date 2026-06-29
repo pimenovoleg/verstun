@@ -320,9 +320,20 @@ class BotStateStore:
                 "post_message_id": post_message_id,
                 "channel_id": channel_id,
                 "created_at": _now_iso(),
+                "status": "pending",
             }
             self._write(state)
             return True
+
+    def mark_publish_sent(
+        self, private_chat_id: int, post_message_id: int, channel_id: int
+    ) -> None:
+        self._mark_publish_status(private_chat_id, post_message_id, channel_id, "sent")
+
+    def mark_publish_unknown(
+        self, private_chat_id: int, post_message_id: int, channel_id: int
+    ) -> None:
+        self._mark_publish_status(private_chat_id, post_message_id, channel_id, "unknown")
 
     def clear_publish(self, private_chat_id: int, post_message_id: int, channel_id: int) -> None:
         with self._locked():
@@ -330,6 +341,24 @@ class BotStateStore:
             state.setdefault("published_posts", {}).pop(
                 _publish_key(private_chat_id, post_message_id, channel_id), None
             )
+            self._write(state)
+
+    def _mark_publish_status(
+        self,
+        private_chat_id: int,
+        post_message_id: int,
+        channel_id: int,
+        status: str,
+    ) -> None:
+        with self._locked():
+            state = self._read()
+            marker = state.setdefault("published_posts", {}).get(
+                _publish_key(private_chat_id, post_message_id, channel_id)
+            )
+            if not isinstance(marker, dict):
+                return
+            marker["status"] = status
+            marker["updated_at"] = _now_iso()
             self._write(state)
 
     @contextmanager

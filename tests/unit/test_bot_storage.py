@@ -426,6 +426,25 @@ def test_publish_marker_blocks_duplicate_publish_and_can_be_cleared(tmp_path):
     assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
 
 
+def test_publish_marker_records_status_transitions(tmp_path):
+    store = BotStateStore(str(tmp_path))
+
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert state["published_posts"]["42:777:-1001"]["status"] == "pending"
+
+    store.mark_publish_sent(private_chat_id=42, post_message_id=777, channel_id=-1001)
+    state = json.loads(path.read_text(encoding="utf-8"))
+    marker = state["published_posts"]["42:777:-1001"]
+    assert marker["status"] == "sent"
+    assert isinstance(marker["updated_at"], str)
+
+    store.mark_publish_unknown(private_chat_id=42, post_message_id=777, channel_id=-1001)
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert state["published_posts"]["42:777:-1001"]["status"] == "unknown"
+
+
 def test_published_markers_expire_after_retention(tmp_path):
     store = BotStateStore(str(tmp_path))
     assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
