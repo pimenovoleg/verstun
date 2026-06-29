@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -46,10 +50,11 @@ class BotStateStore:
     def __init__(self, data_dir: str, *, max_posts: int = 100) -> None:
         self._dir = Path(data_dir).resolve()
         self._path = self._dir / "bot-state.json"
+        self._lock_path = self._dir / "bot-state.lock"
         self._max_posts = max_posts
 
     def is_connect_pending(self) -> bool:
-        with _LOCK:
+        with self._locked():
             pending = self._read().get("connect_pending", {})
             if isinstance(pending, bool):
                 return False
@@ -66,7 +71,7 @@ class BotStateStore:
             return (datetime.now(UTC) - created).total_seconds() <= _CONNECT_TTL_SECONDS
 
     def set_connect_pending(self, pending: bool) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             state["connect_pending"] = {
                 "pending": pending,
@@ -75,7 +80,7 @@ class BotStateStore:
             self._write(state)
 
     def save_channel(self, chat_id: int, title: str, username: str | None) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             channels = state.setdefault("channels", {})
             channels[str(chat_id)] = {
@@ -88,7 +93,7 @@ class BotStateStore:
             self._write(state)
 
     def list_channels(self) -> list[ConnectedChannel]:
-        with _LOCK:
+        with self._locked():
             channels = self._read().get("channels", {})
             active = [c for c in channels.values() if c.get("active", True)]
             active.sort(key=lambda c: str(c.get("title") or ""))
@@ -102,7 +107,7 @@ class BotStateStore:
             ]
 
     def get_channel(self, chat_id: int) -> ConnectedChannel | None:
-        with _LOCK:
+        with self._locked():
             raw = self._read().get("channels", {}).get(str(chat_id))
             if not raw or not raw.get("active", True):
                 return None
@@ -113,7 +118,7 @@ class BotStateStore:
             )
 
     def delete_channel(self, chat_id: int) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             state.setdefault("channels", {}).pop(str(chat_id), None)
             for raw in state.setdefault("users", {}).values():
@@ -127,7 +132,7 @@ class BotStateStore:
             self._write(state)
 
     def save_user(self, telegram_id: int, name: str, username: str | None) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             users = state.setdefault("users", {})
             _canonicalise_user_record(users, telegram_id)
@@ -148,7 +153,7 @@ class BotStateStore:
             self._write(state)
 
     def delete_user(self, telegram_id: int) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             users = state.setdefault("users", {})
             users.pop(str(telegram_id), None)
@@ -159,7 +164,7 @@ class BotStateStore:
             self._write(state)
 
     def get_user(self, telegram_id: int) -> ManagedUser | None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             users = state.setdefault("users", {})
             changed = _canonicalise_user_record(users, telegram_id)
@@ -169,7 +174,7 @@ class BotStateStore:
             return _managed_user_from_raw(raw)
 
     def list_users(self) -> list[ManagedUser]:
-        with _LOCK:
+        with self._locked():
             users_by_id = {}
             for raw in self._read().get("users", {}).values():
                 user = _managed_user_from_raw(raw)
@@ -183,7 +188,7 @@ class BotStateStore:
         return self.get_user(telegram_id) is not None
 
     def set_user_channel_access(self, telegram_id: int, channel_id: int, allowed: bool) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             users = state.setdefault("users", {})
             raw = users.get(str(telegram_id))
@@ -210,7 +215,7 @@ class BotStateStore:
         return [channel for channel in self.list_channels() if channel.chat_id in allowed]
 
     def save_post(self, private_chat_id: int, message_id: int, html: str) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             posts = state.setdefault("posts", {})
             published = state.setdefault("published_posts", {})
@@ -240,7 +245,7 @@ class BotStateStore:
             self._write(state)
 
     def get_post(self, private_chat_id: int, message_id: int) -> str | None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             posts = state.setdefault("posts", {})
             published = state.setdefault("published_posts", {})
@@ -257,14 +262,14 @@ class BotStateStore:
             return html if isinstance(html, str) else None
 
     def get_add_blank_spacers(self) -> bool:
-        with _LOCK:
+        with self._locked():
             settings = self._read().get("render_settings", {})
             if not isinstance(settings, dict):
                 return True
             return settings.get("add_blank_spacers") is not False
 
     def set_add_blank_spacers(self, enabled: bool) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             render_settings = state.setdefault("render_settings", {})
             if not isinstance(render_settings, dict):
@@ -280,7 +285,7 @@ class BotStateStore:
         post_message_id: int,
         controls_message_id: int,
     ) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             state.setdefault("active_controls", {})[str(private_chat_id)] = {
                 "private_chat_id": private_chat_id,
@@ -291,7 +296,7 @@ class BotStateStore:
             self._write(state)
 
     def pop_active_controls(self, private_chat_id: int) -> tuple[int, int] | None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             raw = state.setdefault("active_controls", {}).pop(str(private_chat_id), None)
             self._write(state)
@@ -303,7 +308,7 @@ class BotStateStore:
             return None
 
     def begin_publish(self, private_chat_id: int, post_message_id: int, channel_id: int) -> bool:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             published = state.setdefault("published_posts", {})
             _drop_expired(published, _RETENTION_SECONDS)
@@ -320,12 +325,46 @@ class BotStateStore:
             return True
 
     def clear_publish(self, private_chat_id: int, post_message_id: int, channel_id: int) -> None:
-        with _LOCK:
+        with self._locked():
             state = self._read()
             state.setdefault("published_posts", {}).pop(
                 _publish_key(private_chat_id, post_message_id, channel_id), None
             )
             self._write(state)
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        with _LOCK:
+            fd = self._acquire_file_lock()
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    log.warning("bot_state_unlock_failed", path=str(self._lock_path), exc_info=True)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def _acquire_file_lock(self) -> int:
+        fd = None
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(self._dir, 0o700)
+            fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            os.chmod(self._lock_path, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            log.warning("bot_state_lock_failed", path=str(self._lock_path), exc_info=exc)
+            raise BotStateError("bot state is temporarily unavailable") from exc
+        return fd
 
     def _read(self) -> dict[str, Any]:
         if not self._path.exists():
@@ -360,16 +399,19 @@ class BotStateStore:
         return raw
 
     def _write(self, state: dict[str, Any]) -> None:
-        tmp = self._path.with_suffix(".tmp")
+        tmp = self._tmp_path()
         try:
             self._dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self._dir, 0o700)
             data = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self._path)
             os.chmod(self._path, 0o600)
+            _fsync_dir(self._dir)
         except OSError as exc:
             try:
                 tmp.unlink(missing_ok=True)
@@ -377,6 +419,9 @@ class BotStateStore:
                 pass
             log.warning("bot_state_write_failed", path=str(self._path), exc_info=exc)
             raise BotStateError("bot state is temporarily unavailable") from exc
+
+    def _tmp_path(self) -> Path:
+        return self._path.with_name(f"{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
 
 
 def _empty_state() -> dict[str, Any]:
@@ -401,6 +446,14 @@ def _publish_key(private_chat_id: int, post_message_id: int, channel_id: int) ->
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _drop_expired(records: dict[str, Any], ttl_seconds: int) -> None:

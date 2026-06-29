@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import stat
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -6,6 +7,23 @@ from unittest.mock import patch
 import pytest
 
 from src.bot.storage import BotStateError, BotStateStore
+
+
+def _save_users_worker(data_dir: str, worker_index: int, start_event, error_queue) -> None:
+    try:
+        if not start_event.wait(10):
+            raise TimeoutError("start event was not set")
+        store = BotStateStore(data_dir)
+        for offset in range(12):
+            telegram_id = worker_index * 1000 + offset
+            store.save_user(
+                telegram_id=telegram_id,
+                name=f"User {telegram_id}",
+                username=None,
+            )
+    except BaseException as exc:
+        error_queue.put(f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def test_connect_pending_persists(tmp_path):
@@ -345,6 +363,7 @@ def test_state_file_permissions_are_private(tmp_path):
 
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "bot-state.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "bot-state.lock").stat().st_mode) == 0o600
 
 
 def test_state_write_io_error_raises_bot_state_error(tmp_path):
@@ -355,6 +374,45 @@ def test_state_write_io_error_raises_bot_state_error(tmp_path):
             store.save_post(private_chat_id=42, message_id=777, html="<h1>Hello</h1>")
 
     assert not (tmp_path / "bot-state.tmp").exists()
+    assert list(tmp_path.glob("bot-state.json.*.tmp")) == []
+
+
+def test_state_updates_are_serialized_across_processes(tmp_path):
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("POSIX fork start method is required for this concurrency test")
+    ctx = multiprocessing.get_context("fork")
+    start_event = ctx.Event()
+    error_queue = ctx.Queue()
+    worker_count = 6
+    users_per_worker = 12
+    processes = [
+        ctx.Process(
+            target=_save_users_worker,
+            args=(str(tmp_path), worker_index, start_event, error_queue),
+        )
+        for worker_index in range(worker_count)
+    ]
+
+    for process in processes:
+        process.start()
+    start_event.set()
+    for process in processes:
+        process.join(15)
+
+    alive = [process.pid for process in processes if process.is_alive()]
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+            process.join()
+
+    errors = []
+    while not error_queue.empty():
+        errors.append(error_queue.get())
+
+    assert alive == []
+    assert errors == []
+    assert [process.exitcode for process in processes] == [0] * worker_count
+    assert len(BotStateStore(str(tmp_path)).list_users()) == worker_count * users_per_worker
 
 
 def test_publish_marker_blocks_duplicate_publish_and_can_be_cleared(tmp_path):
