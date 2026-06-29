@@ -60,7 +60,7 @@ async def test_happy_path_answers_rich_once(tmp_path):
     message = _message()
     bot = _bot_returning(b"# Hello\n")
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<b>Hello</b>", [])) as conv:
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<b>Hello</b>", [])) as conv:
         await handle_document(message, bot, _settings(tmp_path))
 
     conv.assert_called_once()
@@ -117,7 +117,7 @@ async def test_none_file_size_proceeds(tmp_path):
     message = _message(file_size=None)
     bot = _bot_returning(b"# Hello")
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<b>Hello</b>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<b>Hello</b>", [])):
         await handle_document(message, bot, _settings(tmp_path))
 
     bot.download.assert_awaited_once()
@@ -152,7 +152,7 @@ async def test_rich_message_send_error_replies_with_retry_hint(tmp_path):
     message.answer_rich = AsyncMock(side_effect=_telegram_error())
     bot = _bot_returning(b"# Hello")
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<b>Hello</b>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<b>Hello</b>", [])):
         await handle_document(message, bot, _settings(tmp_path))
 
     message.answer.assert_awaited_once_with(texts.POST_SEND_ERROR)
@@ -163,7 +163,7 @@ async def test_length_boundary_32768_accepted(tmp_path):
     bot = _bot_returning(b"# Hello")
     html = "x" * 32768
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=(html, [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=(html, [])):
         await handle_document(message, bot, _settings(tmp_path))
 
     message.answer_rich.assert_awaited_once()
@@ -175,7 +175,7 @@ async def test_length_boundary_32769_rejected(tmp_path):
     bot = _bot_returning(b"# Hello")
     html = "x" * 32769
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=(html, [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=(html, [])):
         await handle_document(message, bot, _settings(tmp_path))
 
     message.answer.assert_awaited_once_with(texts.POST_TOO_LONG)
@@ -192,7 +192,7 @@ async def test_broken_media_notice_not_blocked_by_length_cap(tmp_path):
     bot = _bot_returning(b"# Hello")
     html = "x" * 32768
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=(html, [0])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=(html, [0])):
         await handle_document(message, bot, _settings(tmp_path))
 
     message.answer_rich.assert_awaited_once()
@@ -211,7 +211,7 @@ async def test_broken_media_listed(tmp_path):
     message.answer_rich = AsyncMock(return_value=sent)
     bot = _bot_returning(b"# Hello")
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<b>body</b>", [0, 2])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<b>body</b>", [0, 2])):
         await handle_document(message, bot, _settings(tmp_path))
 
     message.answer_rich.assert_awaited_once()

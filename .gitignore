@@ -1,4 +1,5 @@
 Caddyfile
+/posts
 
 # Secrets - never commit
 .env

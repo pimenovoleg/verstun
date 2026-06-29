@@ -272,7 +272,7 @@ async def test_users_command_reports_state_error(tmp_path):
     store.delete_user.side_effect = BotStateError("state")
     message = _message()
 
-    with patch("src.bot.main._store", return_value=store):
+    with patch("src.bot.common._store", return_value=store):
         await handle_users_command(message, settings)
 
     message.answer.assert_awaited_once_with(texts.STATE_READ_ERROR)
@@ -323,7 +323,7 @@ async def test_channels_command_reports_state_error(tmp_path):
     settings = _settings(tmp_path)
     message = _message()
 
-    with patch("src.bot.main._visible_channels", side_effect=BotStateError("state")):
+    with patch("src.bot.common._visible_channels", side_effect=BotStateError("state")):
         await handle_channels(message, settings)
 
     message.answer.assert_awaited_once_with(texts.STATE_READ_ERROR)
@@ -399,7 +399,7 @@ async def test_channel_callback_reports_state_error(tmp_path):
     settings = _settings(tmp_path)
     callback = _callback("chan:list:0")
 
-    with patch("src.bot.main._store", side_effect=BotStateError("state")):
+    with patch("src.bot.common._store", side_effect=BotStateError("state")):
         await handle_channel_callback(callback, settings)
 
     callback.message.edit_text.assert_awaited_once_with(texts.STATE_READ_ERROR)
@@ -470,7 +470,7 @@ async def test_users_callback_reports_state_error(tmp_path):
     settings = _settings(tmp_path)
     callback = _callback("usr:list:0")
 
-    with patch("src.bot.main._store", side_effect=BotStateError("state")):
+    with patch("src.bot.common._store", side_effect=BotStateError("state")):
         await handle_users_callback(callback, settings)
 
     callback.message.edit_text.assert_awaited_once_with(texts.STATE_READ_ERROR)
@@ -634,7 +634,7 @@ async def test_forwarded_channel_reports_state_error_when_pending_read_fails(tmp
     )
     bot = AsyncMock()
 
-    with patch("src.bot.main._store", return_value=store):
+    with patch("src.bot.common._store", return_value=store):
         await handle_forwarded_channel(message, bot, settings)
 
     message.answer.assert_awaited_once_with(texts.STATE_READ_ERROR)
@@ -725,7 +725,7 @@ async def test_document_handler_replies_with_publish_buttons_when_channels_exist
     bot = _bot_with_member(_admin_member(can_post_messages=True))
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     assert BotStateStore(settings.data_dir).get_post(private_chat_id=42, message_id=777) == (
@@ -758,7 +758,7 @@ async def test_document_handler_reports_publish_controls_send_error(tmp_path):
     bot = _bot_with_member(_admin_member(can_post_messages=True))
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     assert message.answer.await_args_list[0].args[0] == texts.PUBLISH_CONTROLS_PROMPT
@@ -809,7 +809,7 @@ async def test_document_handler_filters_publish_buttons_for_user_acl(tmp_path):
     bot = _bot_with_member(_admin_member(can_post_messages=True))
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     markup = message.answer.await_args.kwargs["reply_markup"]
@@ -840,7 +840,7 @@ async def test_document_handler_hides_channels_without_current_bot_rights(tmp_pa
     ]
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     markup = message.answer.await_args.kwargs["reply_markup"]
@@ -868,7 +868,7 @@ async def test_document_handler_deactivates_previous_publish_controls(tmp_path):
     bot = _bot_with_member(_admin_member(can_post_messages=True))
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     bot.edit_message_reply_markup.assert_awaited_once_with(
@@ -893,7 +893,7 @@ async def test_document_handler_replies_with_connect_hint_when_no_channels(tmp_p
     bot = AsyncMock()
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     message.answer.assert_awaited_once_with(
@@ -963,7 +963,7 @@ async def test_publish_callback_state_error_keeps_controls_message(tmp_path):
     callback.message.reply_to_message.message_id = 777
     bot = _bot_with_member(_admin_member(can_post_messages=True))
 
-    with patch("src.bot.main._store", side_effect=BotStateError("state")):
+    with patch("src.bot.common._store", side_effect=BotStateError("state")):
         await handle_publish_callback(callback, bot, settings)
 
     bot.send_rich_message.assert_not_awaited()
@@ -985,7 +985,7 @@ async def test_publish_callback_acl_state_error_keeps_controls_message(tmp_path)
     callback.message.reply_to_message.message_id = 777
     bot = _bot_with_member(_admin_member(can_post_messages=True))
 
-    with patch("src.bot.main._can_publish_to_channel", side_effect=BotStateError("state")):
+    with patch("src.bot.common._can_publish_to_channel", side_effect=BotStateError("state")):
         await handle_publish_callback(callback, bot, settings)
 
     bot.send_rich_message.assert_not_awaited()
@@ -1104,7 +1104,7 @@ async def test_document_handler_saves_sent_rich_html(tmp_path):
     bot = AsyncMock()
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
-    with patch("src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
+    with patch("src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])):
         await handle_document(message, bot, settings)
 
     assert BotStateStore(settings.data_dir).get_post(private_chat_id=42, message_id=777) == (
@@ -1162,7 +1162,7 @@ async def test_document_handler_passes_blank_spacing_setting_to_converter(tmp_pa
     bot.download = AsyncMock(return_value=MagicMock(read=MagicMock(return_value=b"# Hello")))
 
     with patch(
-        "src.bot.main.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])
+        "src.bot.document.markdown_to_rich_html", return_value=("<h1>Hello</h1>", [])
     ) as convert:
         await handle_document(message, bot, settings)
 

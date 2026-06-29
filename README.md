@@ -1,7 +1,5 @@
 # Verstun
 
-[English](README.en.md)
-
 Verstun - self-host Telegram-бот для авторов каналов. Он берет Markdown-файл,
 собирает из него Telegram Rich Message, сохраняет встроенные картинки на вашем
 сервере и возвращает готовый пост в личный чат. После проверки пост можно
@@ -490,10 +488,3 @@ python3 -m venv .venv
 ## Лицензия
 
 MIT
-
-## Автор
-
-Павел Молянов - [molyanov.ru](https://molyanov.ru)
-
-Веду Телеграм-канал про AI, предпринимательство, менеджмент и вайбкодинг ->
-<a href="https://t.me/+LATr_Jgwz5EzNDM6">@molyanov_blog</a>
