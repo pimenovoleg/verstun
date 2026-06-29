@@ -24,6 +24,7 @@ from aiogram.types import (
 from src.bot import texts
 from src.bot.main import (
     USER_PICKER_REQUEST_ID,
+    _bot_can_post_to_channel,
     _register_bot_commands,
     handle_channel_callback,
     handle_channels,
@@ -99,7 +100,7 @@ def _admin_member(can_post_messages: bool = True) -> ChatMemberAdministrator:
 
 def _bot_with_member(member: ChatMemberAdministrator) -> AsyncMock:
     bot = AsyncMock()
-    bot.get_me = AsyncMock(return_value=User(id=999, is_bot=True, first_name="verstun"))
+    bot.me = AsyncMock(return_value=User(id=999, is_bot=True, first_name="verstun"))
     bot.get_chat_member = AsyncMock(return_value=member)
     return bot
 
@@ -1109,6 +1110,41 @@ async def test_document_handler_saves_sent_rich_html(tmp_path):
     assert BotStateStore(settings.data_dir).get_post(private_chat_id=42, message_id=777) == (
         "<h1>Hello</h1>"
     )
+
+
+async def test_bot_rights_check_uses_cached_me_not_get_me():
+    bot = AsyncMock()
+    bot.me = AsyncMock(return_value=User(id=999, is_bot=True, first_name="verstun"))
+    bot.get_chat_member = AsyncMock(return_value=_admin_member(can_post_messages=True))
+
+    assert await _bot_can_post_to_channel(bot, -100123) is True
+
+    # Must resolve the bot id through the cached me() helper, never the uncached
+    # get_me(), so checking many channels stays one getMe round-trip.
+    bot.me.assert_awaited_once()
+    bot.get_me.assert_not_awaited()
+    bot.get_chat_member.assert_awaited_once_with(chat_id=-100123, user_id=999)
+
+
+async def test_publish_controls_check_many_channels_without_get_me(tmp_path):
+    settings = _settings(tmp_path)
+    store = BotStateStore(settings.data_dir)
+    store.save_channel(chat_id=-1001, title="Первый", username=None)
+    store.save_channel(chat_id=-1002, title="Второй", username=None)
+    store.save_channel(chat_id=-1003, title="Третий", username=None)
+    message = _message()
+    controls = MagicMock()
+    controls.message_id = 778
+    message.answer = AsyncMock(return_value=controls)
+    bot = _bot_with_member(_admin_member(can_post_messages=True))
+
+    from src.bot.main import _send_publish_controls
+
+    await _send_publish_controls(message, bot, settings, post_message_id=777)
+
+    # One getMe (cached) regardless of channel count; one membership probe per channel.
+    bot.get_me.assert_not_awaited()
+    assert bot.get_chat_member.await_count == 3
 
 
 async def test_document_handler_passes_blank_spacing_setting_to_converter(tmp_path):

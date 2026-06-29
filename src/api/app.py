@@ -41,11 +41,11 @@ app = create_app()
 
 def _dir_writable(path: str) -> bool:
     directory = Path(path)
-    probe = directory / ".healthcheck"
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        probe.write_text("ok", encoding="utf-8")
-        os.remove(probe)
     except OSError:
         return False
-    return True
+    # Probe writability with os.access instead of writing a temp file: health
+    # checks can be polled frequently, and writing/deleting a probe on every call
+    # is needless disk churn (and races two concurrent checks on a shared name).
+    return os.access(directory, os.W_OK | os.X_OK)

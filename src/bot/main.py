@@ -517,7 +517,9 @@ async def handle_document(message: Message, bot: Bot, settings: Settings) -> Non
 
 async def _bot_can_post_to_channel(bot: Bot, channel_id: int) -> bool:
     try:
-        me = await bot.get_me()
+        # bot.me() caches get_me() for the bot's lifetime, so checking N channels
+        # in a row issues one getMe call instead of one per channel.
+        me = await bot.me()
         member = await bot.get_chat_member(chat_id=channel_id, user_id=me.id)
     except TelegramAPIError as exc:
         log.warning("channel_rights_check_failed", channel_id=channel_id, exc_info=exc)

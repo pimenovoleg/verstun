@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -57,4 +59,42 @@ def test_health_endpoint(tmp_path, monkeypatch):
         assert body["data_dir_writable"] is True
         assert body["media_dir_writable"] is True
     finally:
+        get_settings.cache_clear()
+
+
+def test_health_does_not_write_probe_file(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    media_dir = tmp_path / "media"
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("MEDIA_DIR", str(media_dir))
+    get_settings.cache_clear()
+    client = TestClient(app)
+    try:
+        assert client.get("/health").status_code == 200
+        # Writability is probed via os.access, so no probe file is left behind
+        # and the dirs stay empty (no per-call disk churn).
+        assert list(data_dir.iterdir()) == []
+        assert list(media_dir.iterdir()) == []
+    finally:
+        get_settings.cache_clear()
+
+
+def test_health_reports_degraded_when_dir_not_writable(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    media_dir = tmp_path / "media"
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("MEDIA_DIR", str(media_dir))
+    get_settings.cache_clear()
+    os.chmod(data_dir, 0o500)  # read + execute, no write
+    client = TestClient(app)
+    try:
+        response = client.get("/health")
+        assert response.status_code == 503
+        detail = response.json()["detail"]
+        assert detail["status"] == "degraded"
+        assert detail["data_dir_writable"] is False
+        assert detail["media_dir_writable"] is True
+    finally:
+        os.chmod(data_dir, 0o700)
         get_settings.cache_clear()
