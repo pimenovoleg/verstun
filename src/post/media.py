@@ -13,6 +13,7 @@ import base64
 import binascii
 import hashlib
 import os
+import time
 from pathlib import Path
 
 import structlog
@@ -30,6 +31,11 @@ _WEBP = b"WEBP"
 
 # Strips RFC-2045 line-wrap whitespace from a base64 payload before decoding.
 _B64_WHITESPACE = str.maketrans("", "", " \t\n\r")
+
+# Prune grace window for files written by another in-flight message. aiogram may
+# process updates concurrently; without this, MediaStore B can delete fresh files
+# written by MediaStore A before A sends the Rich Message that references them.
+_PRUNE_GRACE_SECONDS = 30 * 60
 
 
 def _sniff_extension(data: bytes) -> str | None:
@@ -130,12 +136,12 @@ class MediaStore:
         """Delete oldest files until the dir is under ``media_max_bytes``.
 
         Every image hosted for the CURRENT message (this store's ``_saved_hashes``)
-        is protected, even if they alone exceed the cap. ``handle_document`` hosts
-        all of a post's images before sending the Rich Message, so pruning an
-        earlier image of the same post would make it vanish from the channel
-        without ever being reported in ``failed_media_indices``. Only files left by
-        previous messages are eligible for pruning. Filenames are ``<sha256>.<ext>``,
-        so the stem is the content hash we match against ``_saved_hashes``.
+        is protected, even if they alone exceed the cap. Fresh files from other
+        MediaStore instances are also protected for a short grace window: aiogram
+        may process updates concurrently, and another message can still be between
+        hosting images and sending the Rich Message. Older prior-message files are
+        eligible for pruning. Filenames are ``<sha256>.<ext>``, so the stem is the
+        content hash we match against ``_saved_hashes``.
         """
         try:
             files = [p for p in self._dir.iterdir() if p.is_file()]
@@ -146,19 +152,24 @@ class MediaStore:
         if total <= self._media_max_bytes:
             return
 
-        try:
-            candidates = sorted(
-                (p for p in files if p.stem not in self._saved_hashes),
-                key=lambda p: p.stat().st_mtime,
-            )
-        except OSError as exc:
-            log.warning("media_prune_sort_failed", path=str(self._dir), exc_info=exc)
-            return
-        for path in candidates:
+        cutoff_mtime = time.time() - _PRUNE_GRACE_SECONDS
+        candidates = []
+        for path in files:
+            if path.stem in self._saved_hashes:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_mtime > cutoff_mtime:
+                continue
+            candidates.append((path, stat.st_mtime, stat.st_size))
+        candidates.sort(key=lambda item: item[1])
+
+        for path, _, size in candidates:
             if total <= self._media_max_bytes:
                 break
             try:
-                size = path.stat().st_size
                 os.remove(path)
             except OSError:
                 continue

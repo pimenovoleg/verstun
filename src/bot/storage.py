@@ -213,10 +213,12 @@ class BotStateStore:
         with _LOCK:
             state = self._read()
             posts = state.setdefault("posts", {})
+            published = state.setdefault("published_posts", {})
             prefix = f"{private_chat_id}:"
             for key in list(posts):
                 if key.startswith(prefix):
                     posts.pop(key, None)
+                    _drop_publish_markers_for_post_key(published, key)
             posts[_post_key(private_chat_id, message_id)] = {
                 "private_chat_id": private_chat_id,
                 "message_id": message_id,
@@ -224,6 +226,8 @@ class BotStateStore:
                 "created_at": _now_iso(),
             }
             _drop_expired(posts, _RETENTION_SECONDS)
+            _drop_expired(published, _RETENTION_SECONDS)
+            _drop_publish_markers_for_missing_posts(published, posts)
 
             if len(posts) > self._max_posts:
                 oldest = sorted(
@@ -231,13 +235,23 @@ class BotStateStore:
                 )
                 for key, _ in oldest[: len(posts) - self._max_posts]:
                     posts.pop(key, None)
+                    _drop_publish_markers_for_post_key(published, key)
 
             self._write(state)
 
     def get_post(self, private_chat_id: int, message_id: int) -> str | None:
         with _LOCK:
-            raw = self._read().get("posts", {}).get(_post_key(private_chat_id, message_id))
+            state = self._read()
+            posts = state.setdefault("posts", {})
+            published = state.setdefault("published_posts", {})
+            post_key = _post_key(private_chat_id, message_id)
+            raw = posts.get(post_key)
             if not raw:
+                return None
+            if _is_expired(raw, _RETENTION_SECONDS):
+                posts.pop(post_key, None)
+                _drop_publish_markers_for_post_key(published, post_key)
+                self._write(state)
                 return None
             html = raw.get("html")
             return html if isinstance(html, str) else None
@@ -395,17 +409,53 @@ def _drop_expired(records: dict[str, Any], ttl_seconds: int) -> None:
     Records with a missing or unparseable ``created_at`` are left untouched so a
     malformed timestamp never silently drops live state.
     """
-    cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
     for key, value in list(records.items()):
-        created_at = value.get("created_at") if isinstance(value, dict) else None
-        if not isinstance(created_at, str):
+        if _is_expired(value, ttl_seconds):
+            records.pop(key, None)
+
+
+def _is_expired(record: Any, ttl_seconds: int) -> bool:
+    if not isinstance(record, dict):
+        return False
+    created_at = record.get("created_at")
+    if not isinstance(created_at, str):
+        return False
+    try:
+        created = datetime.fromisoformat(created_at)
+    except ValueError:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
+    return created < cutoff
+
+
+def _drop_publish_markers_for_missing_posts(
+    published: dict[str, Any],
+    posts: dict[str, Any],
+) -> None:
+    live_post_keys = set(posts)
+    for key, raw in list(published.items()):
+        if not isinstance(raw, dict):
             continue
         try:
-            created = datetime.fromisoformat(created_at)
-        except ValueError:
+            post_key = _post_key(int(raw["private_chat_id"]), int(raw["post_message_id"]))
+        except (KeyError, TypeError, ValueError):
             continue
-        if created < cutoff:
-            records.pop(key, None)
+        if post_key not in live_post_keys:
+            published.pop(key, None)
+
+
+def _drop_publish_markers_for_post_key(published: dict[str, Any], post_key: str) -> None:
+    for key, raw in list(published.items()):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            marker_post_key = _post_key(int(raw["private_chat_id"]), int(raw["post_message_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if marker_post_key == post_key:
+            published.pop(key, None)
 
 
 def _file_stamp() -> str:

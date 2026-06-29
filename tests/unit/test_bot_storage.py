@@ -251,6 +251,20 @@ def test_save_post_replaces_previous_post_for_same_private_chat(tmp_path):
     assert store.get_post(private_chat_id=7, message_id=1) == "other"
 
 
+def test_save_post_drops_publish_markers_for_replaced_private_chat_post(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    store.save_post(private_chat_id=42, message_id=1, html="old")
+    store.save_post(private_chat_id=7, message_id=1, html="other")
+    assert store.begin_publish(private_chat_id=42, post_message_id=1, channel_id=-1001) is True
+    assert store.begin_publish(private_chat_id=42, post_message_id=1, channel_id=-1002) is True
+    assert store.begin_publish(private_chat_id=7, post_message_id=1, channel_id=-1001) is True
+
+    store.save_post(private_chat_id=42, message_id=2, html="new")
+
+    raw = json.loads((tmp_path / "bot-state.json").read_text(encoding="utf-8"))
+    assert sorted(raw["published_posts"]) == ["7:1:-1001"]
+
+
 def test_active_controls_can_be_saved_and_popped_once(tmp_path):
     store = BotStateStore(str(tmp_path))
 
@@ -264,12 +278,15 @@ def test_post_cache_prunes_oldest_entries(tmp_path):
     store = BotStateStore(str(tmp_path), max_posts=2)
 
     store.save_post(private_chat_id=1, message_id=1, html="one")
+    assert store.begin_publish(private_chat_id=1, post_message_id=1, channel_id=-1001) is True
     store.save_post(private_chat_id=2, message_id=2, html="two")
     store.save_post(private_chat_id=3, message_id=3, html="three")
 
     assert store.get_post(private_chat_id=1, message_id=1) is None
     assert store.get_post(private_chat_id=2, message_id=2) == "two"
     assert store.get_post(private_chat_id=3, message_id=3) == "three"
+    raw = json.loads((tmp_path / "bot-state.json").read_text(encoding="utf-8"))
+    assert "1:1:-1001" not in raw["published_posts"]
 
 
 def test_connect_pending_expires(tmp_path):
@@ -370,6 +387,24 @@ def test_published_markers_expire_after_retention(tmp_path):
     assert len(reloaded["published_posts"]) == 1
 
 
+def test_expired_publish_markers_dropped_on_next_save(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    store.save_post(private_chat_id=42, message_id=777, html="post")
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    old = (datetime.now(UTC) - timedelta(days=15)).isoformat()
+    for marker in state["published_posts"].values():
+        marker["created_at"] = old
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    store.save_post(private_chat_id=7, message_id=1, html="new")
+
+    reloaded = json.loads(path.read_text(encoding="utf-8"))
+    assert reloaded["published_posts"] == {}
+
+
 def test_expired_posts_dropped_on_next_save(tmp_path):
     store = BotStateStore(str(tmp_path))
     store.save_post(private_chat_id=1, message_id=1, html="old")
@@ -385,3 +420,31 @@ def test_expired_posts_dropped_on_next_save(tmp_path):
 
     assert store.get_post(private_chat_id=1, message_id=1) is None
     assert store.get_post(private_chat_id=2, message_id=2) == "new"
+
+
+def test_get_post_expires_stale_post_and_related_publish_markers(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    store.save_post(private_chat_id=42, message_id=777, html="old")
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["posts"]["42:777"]["created_at"] = (datetime.now(UTC) - timedelta(days=15)).isoformat()
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    assert store.get_post(private_chat_id=42, message_id=777) is None
+    reloaded = json.loads(path.read_text(encoding="utf-8"))
+    assert "42:777" not in reloaded["posts"]
+    assert reloaded["published_posts"] == {}
+
+
+def test_get_post_expiry_accepts_legacy_naive_timestamp(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    store.save_post(private_chat_id=42, message_id=777, html="old")
+
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["posts"]["42:777"]["created_at"] = (datetime.now() - timedelta(days=15)).isoformat()
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    assert store.get_post(private_chat_id=42, message_id=777) is None

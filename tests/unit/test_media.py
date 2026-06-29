@@ -163,7 +163,7 @@ def test_size_cap_prune_removes_oldest_from_prior_message(tmp_path):
     # message, so its hash is not in this store's _saved_hashes).
     hash_a = hashlib.sha256(img_a).hexdigest()
     (tmp_path / f"{hash_a}.png").write_bytes(img_a)
-    old = time.time() - 100
+    old = time.time() - 60 * 60
     os.utime(tmp_path / f"{hash_a}.png", (old, old))
 
     # Cap allows only one image of this size at a time.
@@ -197,6 +197,25 @@ def test_prune_keeps_all_images_of_current_message(tmp_path):
     names = {p.name for p in tmp_path.iterdir()}
     assert names == {
         f"{hashlib.sha256(img_a).hexdigest()}.png",
+        f"{hashlib.sha256(img_b).hexdigest()}.png",
+    }
+
+
+def test_prune_keeps_recent_prior_message_file_for_concurrent_send(tmp_path):
+    img_a = _png_bytes(width=20, height=20, color=b"\xaa\xaa\xaa")
+    img_b = _png_bytes(width=20, height=20, color=b"\xbb\xbb\xbb")
+    hash_a = hashlib.sha256(img_a).hexdigest()
+    (tmp_path / f"{hash_a}.png").write_bytes(img_a)
+
+    cap = len(img_a) + len(img_b) - 1
+    store = _store(tmp_path, media_max_bytes=cap)
+
+    url_b = store.save(_b64(img_b))
+    assert url_b is not None
+
+    names = {p.name for p in tmp_path.iterdir()}
+    assert names == {
+        f"{hash_a}.png",
         f"{hashlib.sha256(img_b).hexdigest()}.png",
     }
 

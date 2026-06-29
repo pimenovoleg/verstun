@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.enums import ChatMemberStatus
@@ -940,6 +941,25 @@ async def test_publish_callback_rejects_missing_cached_post(tmp_path):
 
     callback.answer.assert_awaited_once_with(texts.POST_BUTTON_STALE, show_alert=True)
     bot.send_rich_message.assert_not_awaited()
+
+
+async def test_publish_callback_rejects_expired_cached_post(tmp_path):
+    settings = _settings(tmp_path)
+    store = BotStateStore(settings.data_dir)
+    store.save_channel(chat_id=-100123, title="Канал", username=None)
+    store.save_post(private_chat_id=42, message_id=777, html="<h1>Hello</h1>")
+    path = tmp_path / "data" / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["posts"]["42:777"]["created_at"] = (datetime.now(UTC) - timedelta(days=15)).isoformat()
+    path.write_text(json.dumps(state), encoding="utf-8")
+    callback = _callback("pub:777:-100123")
+    bot = _bot_with_member(_admin_member(can_post_messages=True))
+
+    await handle_publish_callback(callback, bot, settings)
+
+    callback.answer.assert_awaited_once_with(texts.POST_BUTTON_STALE, show_alert=True)
+    bot.send_rich_message.assert_not_awaited()
+    assert BotStateStore(settings.data_dir).get_post(private_chat_id=42, message_id=777) is None
 
 
 async def test_publish_callback_rejects_deleted_channel(tmp_path):
