@@ -120,17 +120,22 @@ class MediaStore:
             return None
 
         self._saved_hashes.add(digest)
-        self._prune(keep=dest)
+        self._prune()
         return self._url_for(digest, ext)
 
     def _url_for(self, digest: str, ext: str) -> str:
         return f"{self._base_url}/{digest}.{ext}"
 
-    def _prune(self, keep: Path) -> None:
+    def _prune(self) -> None:
         """Delete oldest files until the dir is under ``media_max_bytes``.
 
-        ``keep`` (the just-saved file) is never pruned, even if it alone exceeds
-        the cap.
+        Every image hosted for the CURRENT message (this store's ``_saved_hashes``)
+        is protected, even if they alone exceed the cap. ``handle_document`` hosts
+        all of a post's images before sending the Rich Message, so pruning an
+        earlier image of the same post would make it vanish from the channel
+        without ever being reported in ``failed_media_indices``. Only files left by
+        previous messages are eligible for pruning. Filenames are ``<sha256>.<ext>``,
+        so the stem is the content hash we match against ``_saved_hashes``.
         """
         try:
             files = [p for p in self._dir.iterdir() if p.is_file()]
@@ -141,10 +146,9 @@ class MediaStore:
         if total <= self._media_max_bytes:
             return
 
-        keep_resolved = keep.resolve()
         try:
             candidates = sorted(
-                (p for p in files if p.resolve() != keep_resolved),
+                (p for p in files if p.stem not in self._saved_hashes),
                 key=lambda p: p.stat().st_mtime,
             )
         except OSError as exc:

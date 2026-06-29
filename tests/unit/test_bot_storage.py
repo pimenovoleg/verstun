@@ -349,3 +349,39 @@ def test_publish_marker_blocks_duplicate_publish_and_can_be_cleared(tmp_path):
     store.clear_publish(private_chat_id=42, post_message_id=777, channel_id=-1001)
 
     assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+
+
+def test_published_markers_expire_after_retention(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+    # Without expiry the marker would block this post's channel forever.
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is False
+
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    old = (datetime.now(UTC) - timedelta(days=15)).isoformat()
+    for marker in state["published_posts"].values():
+        marker["created_at"] = old
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    # The expired marker is pruned, so the slot frees up and the count stays bounded.
+    assert store.begin_publish(private_chat_id=42, post_message_id=777, channel_id=-1001) is True
+    reloaded = json.loads(path.read_text(encoding="utf-8"))
+    assert len(reloaded["published_posts"]) == 1
+
+
+def test_expired_posts_dropped_on_next_save(tmp_path):
+    store = BotStateStore(str(tmp_path))
+    store.save_post(private_chat_id=1, message_id=1, html="old")
+
+    path = tmp_path / "bot-state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["posts"]["1:1"]["created_at"] = (datetime.now(UTC) - timedelta(days=15)).isoformat()
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    # A later post (different chat, so the per-chat replace does not touch it)
+    # triggers age-based pruning of the stale entry.
+    store.save_post(private_chat_id=2, message_id=2, html="new")
+
+    assert store.get_post(private_chat_id=1, message_id=1) is None
+    assert store.get_post(private_chat_id=2, message_id=2) == "new"

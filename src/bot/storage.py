@@ -4,7 +4,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,11 @@ import structlog
 log = structlog.get_logger()
 
 _CONNECT_TTL_SECONDS = 10 * 60
+# Cached posts and publish markers describe content already delivered to a
+# channel — the channel is the source of truth. The bot only needs them long
+# enough to back the inline publish buttons, so drop both after two weeks to keep
+# the JSON state from growing without bound.
+_RETENTION_SECONDS = 14 * 24 * 60 * 60
 _LOCK = threading.RLock()
 
 
@@ -218,6 +223,7 @@ class BotStateStore:
                 "html": html,
                 "created_at": _now_iso(),
             }
+            _drop_expired(posts, _RETENTION_SECONDS)
 
             if len(posts) > self._max_posts:
                 oldest = sorted(
@@ -286,6 +292,7 @@ class BotStateStore:
         with _LOCK:
             state = self._read()
             published = state.setdefault("published_posts", {})
+            _drop_expired(published, _RETENTION_SECONDS)
             key = _publish_key(private_chat_id, post_message_id, channel_id)
             if key in published:
                 return False
@@ -380,6 +387,25 @@ def _publish_key(private_chat_id: int, post_message_id: int, channel_id: int) ->
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _drop_expired(records: dict[str, Any], ttl_seconds: int) -> None:
+    """Remove records whose ``created_at`` is older than ``ttl_seconds``.
+
+    Records with a missing or unparseable ``created_at`` are left untouched so a
+    malformed timestamp never silently drops live state.
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
+    for key, value in list(records.items()):
+        created_at = value.get("created_at") if isinstance(value, dict) else None
+        if not isinstance(created_at, str):
+            continue
+        try:
+            created = datetime.fromisoformat(created_at)
+        except ValueError:
+            continue
+        if created < cutoff:
+            records.pop(key, None)
 
 
 def _file_stamp() -> str:

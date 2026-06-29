@@ -153,30 +153,52 @@ def test_per_message_image_count_cap(tmp_path):
     assert store.save(_b64(_png_bytes(color=b"\x03\x03\x03"))) is None
 
 
-def test_size_cap_prune_removes_oldest(tmp_path):
+def test_size_cap_prune_removes_oldest_from_prior_message(tmp_path):
     import os
     import time
 
     img_a = _png_bytes(width=20, height=20, color=b"\xaa\xaa\xaa")
     img_b = _png_bytes(width=20, height=20, color=b"\xbb\xbb\xbb")
+    # A leftover file from a previous message (a fresh MediaStore is built per
+    # message, so its hash is not in this store's _saved_hashes).
+    hash_a = hashlib.sha256(img_a).hexdigest()
+    (tmp_path / f"{hash_a}.png").write_bytes(img_a)
+    old = time.time() - 100
+    os.utime(tmp_path / f"{hash_a}.png", (old, old))
+
     # Cap allows only one image of this size at a time.
     cap = len(img_a) + len(img_b) - 1
     store = _store(tmp_path, media_max_bytes=cap)
-
-    url_a = store.save(_b64(img_a))
-    assert url_a is not None
-    hash_a = hashlib.sha256(img_a).hexdigest()
-    # Backdate the first file so it is the oldest.
-    old = time.time() - 100
-    os.utime(tmp_path / f"{hash_a}.png", (old, old))
 
     url_b = store.save(_b64(img_b))
     assert url_b is not None
     names = {p.name for p in tmp_path.iterdir()}
     hash_b = hashlib.sha256(img_b).hexdigest()
-    # Oldest pruned, just-saved file kept.
+    # Prior-message file pruned, just-saved file kept.
     assert f"{hash_b}.png" in names
     assert f"{hash_a}.png" not in names
+
+
+def test_prune_keeps_all_images_of_current_message(tmp_path):
+    # Regression for the prune-before-send bug: every image hosted by THIS store
+    # (one MediaStore == one post) must survive prune, even when their combined
+    # size blows past media_max_bytes — otherwise an early image of a post could
+    # be deleted before the Rich Message is sent, vanishing without being marked
+    # as failed.
+    img_a = _png_bytes(width=20, height=20, color=b"\xaa\xaa\xaa")
+    img_b = _png_bytes(width=20, height=20, color=b"\xbb\xbb\xbb")
+    # Cap below even a single image, so a naive prune would drop the earlier one.
+    store = _store(tmp_path, media_max_bytes=1)
+
+    url_a = store.save(_b64(img_a))
+    url_b = store.save(_b64(img_b))
+    assert url_a is not None and url_b is not None
+
+    names = {p.name for p in tmp_path.iterdir()}
+    assert names == {
+        f"{hashlib.sha256(img_a).hexdigest()}.png",
+        f"{hashlib.sha256(img_b).hexdigest()}.png",
+    }
 
 
 def test_invalid_base64_returns_none(tmp_path):
