@@ -356,6 +356,17 @@ def test_corrupt_state_file_is_preserved_and_reset(tmp_path):
     assert backups[0].read_text(encoding="utf-8") == "{not-json"
 
 
+def test_healthcheck_reports_corrupt_state_without_resetting(tmp_path):
+    path = tmp_path / "bot-state.json"
+    path.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(BotStateError):
+        BotStateStore(str(tmp_path)).healthcheck()
+
+    assert path.read_text(encoding="utf-8") == "{not-json"
+    assert list(tmp_path.glob("bot-state.json.corrupt-*")) == []
+
+
 def test_state_file_permissions_are_private(tmp_path):
     store = BotStateStore(str(tmp_path))
 

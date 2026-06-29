@@ -343,6 +343,11 @@ class BotStateStore:
             )
             self._write(state)
 
+    def healthcheck(self) -> None:
+        with self._locked():
+            self._read_for_healthcheck()
+            self._write_delete_probe()
+
     def _mark_publish_status(
         self,
         private_chat_id: int,
@@ -394,6 +399,18 @@ class BotStateStore:
             log.warning("bot_state_lock_failed", path=str(self._lock_path), exc_info=exc)
             raise BotStateError("bot state is temporarily unavailable") from exc
         return fd
+
+    def _read_for_healthcheck(self) -> None:
+        if not self._path.exists():
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("bot_state_healthcheck_read_failed", path=str(self._path), exc_info=exc)
+            raise BotStateError("bot state is temporarily unavailable") from exc
+        if not isinstance(raw, dict):
+            log.warning("bot_state_healthcheck_invalid", path=str(self._path))
+            raise BotStateError("bot state is temporarily unavailable")
 
     def _read(self) -> dict[str, Any]:
         if not self._path.exists():
@@ -451,6 +468,33 @@ class BotStateStore:
 
     def _tmp_path(self) -> Path:
         return self._path.with_name(f"{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+
+    def _probe_path(self) -> Path:
+        return self._path.with_name(
+            f"{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.healthcheck"
+        )
+
+    def _write_delete_probe(self) -> None:
+        probe = self._probe_path()
+        tmp = probe.with_suffix(f"{probe.suffix}.tmp")
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(b"ok")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, probe)
+            _fsync_dir(self._dir)
+            probe.unlink()
+            _fsync_dir(self._dir)
+        except OSError as exc:
+            for path in (tmp, probe):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            log.warning("bot_state_healthcheck_write_failed", path=str(self._path), exc_info=exc)
+            raise BotStateError("bot state is temporarily unavailable") from exc
 
 
 def _empty_state() -> dict[str, Any]:
